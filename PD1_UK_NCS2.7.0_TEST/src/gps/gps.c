@@ -6,20 +6,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <zephyr/kernel.h>
 #include <nrf_modem_at.h>
 #include <nrf_modem_gnss.h>
 #include <modem/lte_lc.h>
+#include <modem/nrf_modem_lib.h>
 #include <date_time.h>
 #include <logger.h>
 #include "gps.h"
 
 //#define GPS_DEBUG
 
+#define PI 3.14159265358979323846
+#define EARTH_RADIUS_METERS (6371.0 * 1000.0)
+
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
 static struct k_work_q gnss_work_q;
 
-//#define CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND
 #define GNSS_WORKQ_THREAD_STACK_SIZE 2304
 #define GNSS_WORKQ_THREAD_PRIORITY   5
 
@@ -29,8 +33,8 @@ K_THREAD_STACK_DEFINE(gnss_workq_stack_area, GNSS_WORKQ_THREAD_STACK_SIZE);
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
 #include "assistance.h"
 
-static struct nrf_modem_gnss_agps_data_frame last_agps;
-static struct k_work agps_data_get_work;
+static struct nrf_modem_gnss_agnss_data_frame last_agnss;
+static struct k_work agnss_data_get_work;
 static volatile bool requesting_assistance;
 #endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE */
 
@@ -72,6 +76,13 @@ uint8_t gps_test_info[256] = {0};
 static const char update_indicator[] = {'\\', '|', '/', '-'};
 
 static struct nrf_modem_gnss_pvt_data_frame last_pvt;
+static uint64_t fix_timestamp;
+static uint32_t time_blocked;
+
+/* Reference position. */
+static bool ref_used;
+static double ref_latitude;
+static double ref_longitude;
 
 K_MSGQ_DEFINE(nmea_queue, sizeof(struct nrf_modem_gnss_nmea_data_frame *), 10, 4);
 static K_SEM_DEFINE(pvt_data_sem, 0, 1);
@@ -93,6 +104,50 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_LTE_NETWORK_MODE_LTE_M_GPS) ||
 	     "CONFIG_LTE_NETWORK_MODE_LTE_M_GPS, "
 	     "CONFIG_LTE_NETWORK_MODE_NBIOT_GPS or "
 	     "CONFIG_LTE_NETWORK_MODE_LTE_M_NBIOT_GPS must be enabled");
+
+BUILD_ASSERT((sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) == 1 &&
+	      sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) == 1) ||
+	     (sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) > 1 &&
+	      sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) > 1),
+	     "CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE and "
+	     "CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE must be both either set or empty");
+
+/* Returns the distance between two coordinates in meters. The distance is calculated using the
+ * haversine formula.
+ */
+static double distance_calculate(double lat1, double lon1,
+				 double lat2, double lon2)
+{
+	double d_lat_rad = (lat2 - lat1) * PI / 180.0;
+	double d_lon_rad = (lon2 - lon1) * PI / 180.0;
+
+	double lat1_rad = lat1 * PI / 180.0;
+	double lat2_rad = lat2 * PI / 180.0;
+
+	double a = pow(sin(d_lat_rad / 2), 2) +
+		   pow(sin(d_lon_rad / 2), 2) *
+		   cos(lat1_rad) * cos(lat2_rad);
+
+	double c = 2 * asin(sqrt(a));
+
+	return EARTH_RADIUS_METERS * c;
+}
+
+static void print_distance_from_reference(struct nrf_modem_gnss_pvt_data_frame *pvt_data)
+{
+	if (!ref_used) {
+		return;
+	}
+
+	double distance = distance_calculate(pvt_data->latitude, pvt_data->longitude,
+					     ref_latitude, ref_longitude);
+
+	if (IS_ENABLED(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)) {
+		LOG_INF("Distance from reference: %.01f", distance);
+	} else {
+		printf("\nDistance from reference: %.01f\n", distance);
+	}
+}
 
 static void gnss_event_handler(int event)
 {
@@ -148,12 +203,12 @@ static void gnss_event_handler(int event)
 	#if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
 		if(!test_gps_flag)
 		{
-			retval = nrf_modem_gnss_read(&last_agps,
-						     sizeof(last_agps),
-						     NRF_MODEM_GNSS_DATA_AGPS_REQ);
+			retval = nrf_modem_gnss_read(&last_agnss,
+						     sizeof(last_agnss),
+						     NRF_MODEM_GNSS_DATA_AGNSS_REQ);
 			if(retval == 0)
 			{
-				k_work_submit_to_queue(&gnss_work_q, &agps_data_get_work);
+				k_work_submit_to_queue(&gnss_work_q, &agnss_data_get_work);
 			}
 		}
 	#endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE */
@@ -165,22 +220,29 @@ static void gnss_event_handler(int event)
 }
 
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
-static void agps_data_get_work_fn(struct k_work *item)
+static void agnss_data_get_work_fn(struct k_work *item)
 {
 	ARG_UNUSED(item);
 
 	int err;
 
+	/* GPS data need is always expected to be present and first in list. */
+	__ASSERT(last_agnss.system_count > 0,
+		 "GNSS system data need not found");
+	__ASSERT(last_agnss.system[0].system_id == NRF_MODEM_GNSS_SYSTEM_GPS,
+		 "GPS data need not found");
+
 #if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_SUPL)
-	/* SUPL doesn't usually provide satellite real time integrity information. If GNSS asks
-	 * only for satellite integrity, the request should be ignored.
+	/* SUPL doesn't usually provide NeQuick ionospheric corrections and satellite real time
+	 * integrity information. If GNSS asks only for those, the request should be ignored.
 	 */
-	if (last_agps.sv_mask_ephe == 0 
-		&& last_agps.sv_mask_alm == 0 
-		&& last_agps.data_flags == NRF_MODEM_GNSS_AGPS_INTEGRITY_REQUEST)
+	if (last_agnss.system[0].sv_mask_ephe == 0 &&
+	    last_agnss.system[0].sv_mask_alm == 0 &&
+	    (last_agnss.data_flags & ~(NRF_MODEM_GNSS_AGNSS_NEQUICK_REQUEST |
+				       NRF_MODEM_GNSS_AGNSS_INTEGRITY_REQUEST)) == 0)
 	{
 	#ifdef GPS_DEBUG
-		LOGD("Ignoring assistance request for only satellite integrity");
+		LOGD("Ignoring assistance request for only NeQuick and/or integrity");
 	#endif
 		return;
 	}
@@ -190,8 +252,8 @@ static void agps_data_get_work_fn(struct k_work *item)
 	/* With minimal assistance, the request should be ignored if no GPS time or position
 	 * is requested.
 	 */
-	if (!(last_agps.data_flags & NRF_MODEM_GNSS_AGPS_SYS_TIME_AND_SV_TOW_REQUEST)
-		&& !(last_agps.data_flags & NRF_MODEM_GNSS_AGPS_POSITION_REQUEST))
+	if (!(last_agnss.data_flags & NRF_MODEM_GNSS_AGNSS_GPS_SYS_TIME_AND_SV_TOW_REQUEST) &&
+	    !(last_agnss.data_flags & NRF_MODEM_GNSS_AGNSS_POSITION_REQUEST))
 	{
 	#ifdef GPS_DEBUG
 		LOGD("Ignoring assistance request because no GPS time or position is requested");
@@ -200,20 +262,34 @@ static void agps_data_get_work_fn(struct k_work *item)
 	}
 #endif /* CONFIG_GNSS_SAMPLE_ASSISTANCE_MINIMAL */
 
+	if (last_agnss.data_flags == 0 &&
+	    last_agnss.system[0].sv_mask_ephe == 0 &&
+	    last_agnss.system[0].sv_mask_alm == 0)
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Ignoring assistance request because only QZSS data is requested");
+	#endif
+		return;
+	}
+	
 	requesting_assistance = true;
 
 #ifdef GPS_DEBUG
-	LOGD("Assistance data needed, ephe 0x%08x, alm 0x%08x, flags 0x%02x",
-		last_agps.sv_mask_ephe,
-		last_agps.sv_mask_alm,
-		last_agps.data_flags);
+	LOGD("Assistance data needed: data_flags: 0x%02x", last_agnss.data_flags);
+	for(int i = 0; i < last_agnss.system_count; i++)
+	{
+		LOGD("Assistance data needed: %s ephe: 0x%llx, alm: 0x%llx",
+			get_system_string(last_agnss.system[i].system_id),
+			last_agnss.system[i].sv_mask_ephe,
+			last_agnss.system[i].sv_mask_alm);
+	}
 #endif
 
 #if defined(CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND)
 	lte_connect();
 #endif /* CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND */
 
-	err = assistance_request(&last_agps);
+	err = assistance_request(&last_agnss);
 	if(err)
 	{
 	#ifdef GPS_DEBUG
@@ -284,6 +360,24 @@ static int ttff_test_force_cold_start(void)
 	return 0;
 }
 
+#if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NRF_CLOUD)
+static bool qzss_assistance_is_supported(void)
+{
+	char resp[32];
+
+	if(nrf_modem_at_cmd(resp, sizeof(resp), "AT+CGMM") == 0)
+	{
+		/* nRF9160 does not support QZSS assistance, while nRF91x1 do. */
+		if(strstr(resp, "nRF9160") != NULL)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+#endif /* CONFIG_GNSS_SAMPLE_ASSISTANCE_NRF_CLOUD */
+
 static void ttff_test_prepare_work_fn(struct k_work *item)
 {
 	/* Make sure GNSS is stopped before next start. */
@@ -300,21 +394,31 @@ static void ttff_test_prepare_work_fn(struct k_work *item)
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
 	if(IS_ENABLED(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST_COLD_START))
 	{
-		/* All A-GPS data is always requested before GNSS is started. */
-		last_agps.sv_mask_ephe = 0xffffffff;
-		last_agps.sv_mask_alm = 0xffffffff;
-		last_agps.data_flags =
-			NRF_MODEM_GNSS_AGPS_GPS_UTC_REQUEST |
-			NRF_MODEM_GNSS_AGPS_KLOBUCHAR_REQUEST |
-			NRF_MODEM_GNSS_AGPS_SYS_TIME_AND_SV_TOW_REQUEST |
-			NRF_MODEM_GNSS_AGPS_POSITION_REQUEST |
-			NRF_MODEM_GNSS_AGPS_INTEGRITY_REQUEST;
+		/* All A-GNSS data is always requested before GNSS is started. */
+		last_agnss.data_flags =	NRF_MODEM_GNSS_AGNSS_GPS_UTC_REQUEST
+								| NRF_MODEM_GNSS_AGNSS_KLOBUCHAR_REQUEST
+								| NRF_MODEM_GNSS_AGNSS_NEQUICK_REQUEST
+								| NRF_MODEM_GNSS_AGNSS_GPS_SYS_TIME_AND_SV_TOW_REQUEST
+								| NRF_MODEM_GNSS_AGNSS_POSITION_REQUEST
+								| NRF_MODEM_GNSS_AGNSS_INTEGRITY_REQUEST;
+		last_agnss.system_count = 1;
+		last_agnss.system[0].sv_mask_ephe = 0xffffffff;
+		last_agnss.system[0].sv_mask_alm = 0xffffffff;
 
-		k_work_submit_to_queue(&gnss_work_q, &agps_data_get_work);
+	#if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NRF_CLOUD)
+		if(qzss_assistance_is_supported())
+		{
+			last_agnss.system_count = 2;
+			last_agnss.system[1].sv_mask_ephe = 0x3ff;
+			last_agnss.system[1].sv_mask_alm = 0x3ff;
+		}
+	#endif /* CONFIG_GNSS_SAMPLE_ASSISTANCE_NRF_CLOUD */
+
+		k_work_submit_to_queue(&gnss_work_q, &agnss_data_get_work);
 	}
 	else
 	{
-		/* Start and stop GNSS to trigger possible A-GPS data request. If new A-GPS
+		/* Start and stop GNSS to trigger possible A-GNSS data request. If new A-GNSS
 		 * data is needed it is fetched before GNSS is started.
 		 */
 		nrf_modem_gnss_start();
@@ -351,39 +455,59 @@ static void date_time_evt_handler(const struct date_time_evt *evt)
 
 static int modem_init(void)
 {
-    uint8_t tmpbuf[128] = {0};
-
- 	if(strlen(CONFIG_GNSS_SAMPLE_AT_MAGPIO) > 0)
+	if(IS_ENABLED(CONFIG_DATE_TIME))
 	{
-		if(nrf_modem_at_printf("%s", CONFIG_GNSS_SAMPLE_AT_MAGPIO) != 0)
-		{
-		#ifdef GPS_DEBUG
-			LOGD("Failed to set MAGPIO configuration");
-		#endif
-			return -1;
-		}
+		date_time_register_handler(date_time_evt_handler);
 	}
 
-	if(strlen(CONFIG_GNSS_SAMPLE_AT_COEX0) > 0)
+#if defined(CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND)
+	lte_lc_register_handler(lte_lc_event_handler);
+#elif !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
+	lte_lc_psm_req(true);
+
+#ifdef GPS_DEBUG
+	LOGD("Connecting to LTE network");
+#endif
+	if(lte_lc_connect() != 0)
 	{
-		if(nrf_modem_at_printf("%s", CONFIG_GNSS_SAMPLE_AT_COEX0) != 0)
+	#ifdef GPS_DEBUG
+		LOG_ERR("Failed to connect to LTE network");
+	#endif
+		return -1;
+	}
+	
+#ifdef GPS_DEBUG
+	LOGD("Connected to LTE network");
+#endif
+
+	if(IS_ENABLED(CONFIG_DATE_TIME))
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Waiting for current time");
+	#endif
+	
+		/* Wait for an event from the Date Time library. */
+		k_sem_take(&time_sem, K_MINUTES(10));
+
+		if(!date_time_is_valid())
 		{
 		#ifdef GPS_DEBUG
-			LOGD("Failed to set COEX0 configuration");
+			LOGD("Failed to get current time, continuing anyway");
 		#endif
-			return -1;
 		}
 	}
+#endif
 
 	return 0;
 }
 
-static int gps_work_init(void)
+static int sample_init(void)
 {
 	int err = 0;
 
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
-	struct k_work_queue_config cfg = {
+	struct k_work_queue_config cfg =
+	{
 		.name = "gnss_work_q",
 		.no_yield = false
 	};
@@ -397,7 +521,41 @@ static int gps_work_init(void)
 #endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE || CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST */
 
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
-	k_work_init(&agps_data_get_work, agps_data_get_work_fn);
+	k_work_init(&agnss_data_get_work, agnss_data_get_work_fn);
+
+	err = assistance_init(&gnss_work_q);
+#endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE */
+
+#if defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
+	k_work_init_delayable(&ttff_test_got_fix_work, ttff_test_got_fix_work_fn);
+	k_work_init_delayable(&ttff_test_prepare_work, ttff_test_prepare_work_fn);
+	k_work_init(&ttff_test_start_work, ttff_test_start_work_fn);
+#endif /* CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST */
+
+	return err;
+}
+
+static int gps_work_init(void)
+{
+	int err = 0;
+
+#if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
+	struct k_work_queue_config cfg = 
+	{
+		.name = "gnss_work_q",
+		.no_yield = false
+	};
+
+	k_work_queue_start(
+		&gnss_work_q,
+		gnss_workq_stack_area,
+		K_THREAD_STACK_SIZEOF(gnss_workq_stack_area),
+		GNSS_WORKQ_THREAD_PRIORITY,
+		&cfg);
+#endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE || CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST */
+
+#if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
+	k_work_init(&agnss_data_get_work, agnss_data_get_work_fn);
 
 	err = assistance_init(&gnss_work_q);
 #endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE */
@@ -414,6 +572,17 @@ static int gps_work_init(void)
 
 static int gnss_init_and_start(void)
 {
+#if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND)
+	/* Enable GNSS. */
+	if(lte_lc_func_mode_set(LTE_LC_FUNC_MODE_ACTIVATE_GNSS) != 0)
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Failed to activate GNSS functional mode");
+	#endif
+		return -1;
+	}
+#endif /* CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE || CONFIG_GNSS_SAMPLE_LTE_ON_DEMAND */
+
 	/* Configure GNSS. */
 	if(nrf_modem_gnss_event_handler_set(gnss_event_handler) != 0)
 	{
@@ -438,6 +607,14 @@ static int gnss_init_and_start(void)
 		return -1;
 	}
 
+	/* Make QZSS satellites visible in the NMEA output. */
+	if(nrf_modem_gnss_qzss_nmea_mode_set(NRF_MODEM_GNSS_QZSS_NMEA_MODE_CUSTOM) != 0)
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Failed to enable custom QZSS NMEA mode");
+	#endif
+	}
+
 	/* This use case flag should always be set. */
 	uint8_t use_case = NRF_MODEM_GNSS_USE_CASE_MULTIPLE_HOT_START;
 
@@ -460,8 +637,8 @@ static int gnss_init_and_start(void)
 	#endif
 	}
 
-#if defined(CONFIG_NRF_CLOUD_AGPS_ELEVATION_MASK)
-	if(nrf_modem_gnss_elevation_threshold_set(CONFIG_NRF_CLOUD_AGPS_ELEVATION_MASK) != 0)
+#if defined(CONFIG_NRF_CLOUD_AGNSS_ELEVATION_MASK)
+	if(nrf_modem_gnss_elevation_threshold_set(CONFIG_NRF_CLOUD_AGNSS_ELEVATION_MASK) != 0)
 	{
 	#ifdef GPS_DEBUG
 		LOGD("Failed to set elevation threshold");
@@ -469,7 +646,7 @@ static int gnss_init_and_start(void)
 		return -1;
 	}
 #ifdef GPS_DEBUG
-	LOGD("Set elevation threshold to %u", CONFIG_NRF_CLOUD_AGPS_ELEVATION_MASK);
+	LOGD("Set elevation threshold to %u", CONFIG_NRF_CLOUD_AGNSS_ELEVATION_MASK);
 #endif
 #endif
 
@@ -477,9 +654,9 @@ static int gnss_init_and_start(void)
 	/* Default to no power saving. */
 	uint8_t power_mode = NRF_MODEM_GNSS_PSM_DISABLED;
 
-#if defined(GNSS_SAMPLE_POWER_SAVING_MODERATE)
+#if defined(CONFIG_GNSS_SAMPLE_POWER_SAVING_MODERATE)
 	power_mode = NRF_MODEM_GNSS_PSM_DUTY_CYCLING_PERFORMANCE;
-#elif defined(GNSS_SAMPLE_POWER_SAVING_HIGH)
+#elif defined(CONFIG_GNSS_SAMPLE_POWER_SAVING_HIGH)
 	power_mode = NRF_MODEM_GNSS_PSM_DUTY_CYCLING_POWER;
 #endif
 
@@ -534,6 +711,15 @@ static int gnss_init_and_start(void)
 #endif
 
 	return 0;
+}
+
+static bool output_paused(void)
+{
+#if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_LOG_LEVEL_OFF)
+	return false;
+#else
+	return (requesting_assistance || assistance_is_active()) ? true : false;
+#endif
 }
 
 static void print_satellite_stats(struct nrf_modem_gnss_pvt_data_frame *pvt_data)
@@ -931,13 +1117,40 @@ void gps_off(void)
 
 bool gps_turn_on(void)
 {
+	int err;
 	uint8_t cnt = 0;
 	struct nrf_modem_gnss_nmea_data_frame *nmea_data;
+
+	err = nrf_modem_lib_init();
+	if(err)
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Modem library initialization failed, error: %d", err);
+	#endif
+		return false;
+	}
+
+	/* Initialize reference coordinates (if used). */
+	if (sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) > 1 &&
+		sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) > 1)
+	{
+		ref_used = true;
+		ref_latitude = atof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE);
+		ref_longitude = atof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE);
+	}
 
 	if(modem_init() != 0)
 	{
 	#ifdef GPS_DEBUG
 		LOGD("Failed to initialize modem");
+	#endif
+		return false;
+	}
+
+	if(sample_init() != 0)
+	{
+	#ifdef GPS_DEBUG
+		LOGD("Failed to initialize sample");
 	#endif
 		return false;
 	}
@@ -955,11 +1168,7 @@ bool gps_turn_on(void)
 	gps_local_time = 0;
 	memset(&last_pvt, 0, sizeof(last_pvt));
 	gps_start_time = k_uptime_get();
-
-#ifdef GPS_DEBUG
-	LOGD("begin");
-#endif
-
+	
 	k_work_submit_to_queue(app_work_q, &gps_data_get_work);
 
 	return true;
