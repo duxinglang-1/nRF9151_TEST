@@ -102,7 +102,9 @@ static void uart_receive_data_handle(struct device *dev, uint8_t *data, uint32_t
 #ifdef UART_DEBUG
 	LOGD("uart for wifi!");
 #endif
+#ifdef CONFIG_WIFI_SUPPORT
 	wifi_receive_data_handle(data, datalen);
+#endif
 }
 
 void UartWifiSendData(void)
