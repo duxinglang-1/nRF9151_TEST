@@ -85,6 +85,10 @@
 	};
 };
 
+&gpio0{
+	/delete-property/ gpio-reserved-ranges;
+};
+
 &uart0{
 	compatible = "nordic,nrf-uarte";
 	status = "okay";
