@@ -23,13 +23,6 @@
 
 //#define SHOW_LOG_IN_SCREEN
 
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(gpio0), okay)
-#define PMU_PORT DT_NODELABEL(gpio0)
-#else
-#error "gpio0 devicetree node is disabled"
-#define PMU_PORT	""
-#endif
-
 #define PMU_ALRTB		5
 #define PMU_EINT		8
 

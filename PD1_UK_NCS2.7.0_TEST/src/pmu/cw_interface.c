@@ -35,6 +35,7 @@
 
 #endif/*GPIO_ACT_I2C*/
 
+static struct device *gpio_pmu;
 static struct device *i2c_pmu;
 
 pmudev_ctx_t pmu_dev_ctx;

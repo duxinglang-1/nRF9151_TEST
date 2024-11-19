@@ -18,6 +18,13 @@
 
 //#define GPIO_ACT_I2C
 
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(gpio0), okay)
+#define PMU_PORT DT_NODELABEL(gpio0)
+#else
+#error "gpio0 devicetree node is disabled"
+#define PMU_PORT	""
+#endif
+
 #define CW_NO_ERROR  	0
 #define CW_ERROR      	-1
 
