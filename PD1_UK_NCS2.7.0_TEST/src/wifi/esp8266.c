@@ -16,7 +16,7 @@
 #include "logger.h"
 #include "transfer_cache.h"
 
-#define WIFI_DEBUG
+//#define WIFI_DEBUG
 
 #define WIFI_EN_PIN		1
 #define WIFI_RST_PIN	2
