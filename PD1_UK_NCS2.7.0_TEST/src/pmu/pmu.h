@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <zephyr/kernel.h>
 
-#define PMU_DEBUG
+//#define PMU_DEBUG
 
 //#define PMU_SENSOR_MAX20353
 //#define PMU_SENSOR_NPM1300
