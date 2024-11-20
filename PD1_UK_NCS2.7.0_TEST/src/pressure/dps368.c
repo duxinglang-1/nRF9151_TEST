@@ -21,8 +21,8 @@
 #ifdef GPIO_ACT_I2C
 
 #else
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(i2c2), okay)
-#define PRESSURE_DEV DT_NODELABEL(i2c2)
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(i2c3), okay)
+#define PRESSURE_DEV DT_NODELABEL(i2c3)
 #else
 #error "i2c1 devicetree node is disabled"
 #define PRESSURE_DEV	""
