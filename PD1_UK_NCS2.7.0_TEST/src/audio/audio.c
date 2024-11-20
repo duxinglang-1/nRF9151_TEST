@@ -49,8 +49,8 @@ static uint32_t const * volatile mp_block_to_check = NULL;
 #define AUDIO_PORT	""
 #endif
 
-#define WTN_DATA	20
-#define WTN_BUSY	21
+#define WTN_DATA	11
+#define WTN_BUSY	12
 
 static bool audio_trige_flag = false;
 
