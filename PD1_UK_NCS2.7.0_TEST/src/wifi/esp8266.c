@@ -315,6 +315,9 @@ void wifi_turn_off(void)
 	LOGD("begin");
 #endif
 
+	if(!wifi_is_on)
+		return;
+	
 	wifi_is_on = false;
 	wifi_disable();
 	UartWifiOff();
@@ -594,6 +597,9 @@ void WifiMsgProcess(void)
 	{
 		wifi_on_flag = false;
 
+		if(wifi_is_on)
+			return;
+
 		if(k_timer_remaining_get(&wifi_turn_off_timer) > 0)
 			k_timer_stop(&wifi_turn_off_timer);
 		
@@ -609,6 +615,10 @@ void WifiMsgProcess(void)
 	if(wifi_off_flag)
 	{
 		wifi_off_flag = false;
+
+		if(!wifi_is_on)
+			return;
+		
 		wifi_turn_off();
 		
 		if(k_timer_remaining_get(&wifi_rescan_timer) > 0)
@@ -662,7 +672,7 @@ void wifi_get_infor(void)
 	//获取版本信息
 	Send_Cmd_To_Esp8285(WIFI_GET_VER,50);
 
-	k_timer_start(&wifi_turn_off_timer, K_SECONDS(5), K_NO_WAIT);	
+	k_timer_start(&wifi_turn_off_timer, K_SECONDS(5), K_NO_WAIT);
 }
 
 void wifi_init(void)
