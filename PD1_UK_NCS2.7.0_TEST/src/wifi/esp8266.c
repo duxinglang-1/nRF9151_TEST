@@ -268,11 +268,11 @@ void wifi_disable(void)
 void wifi_start_scanning(void)
 {
 	//设置工作模式 1:station模式 2:AP模式 3:兼容AP+station模式
-	Send_Cmd_To_Esp8285("AT+CWMODE=3\r\n",100);
+	Send_Cmd_To_Esp8285(WIFI_SET_MODE,100);
 	//设置AT+CWLAP信号的排序方式：按RSSI排序，只显示信号强度和MAC模式
-	Send_Cmd_To_Esp8285("AT+CWLAPOPT=1,12\r\n",50);
+	Send_Cmd_To_Esp8285(WIFI_SET_AP_SCAN_OPT,50);
 	//启动扫描
-	Send_Cmd_To_Esp8285("AT+CWLAP\r\n",0);
+	Send_Cmd_To_Esp8285(WIFI_SET_AP_SCAN_START,0);
 }
 
 /*============================================================================
@@ -329,8 +329,8 @@ void wifi_rescanning(void)
 		return;
 
 	//设置AT+CWLAP信号的排序方式：按RSSI排序，只显示信号强度和MAC模式
-	Send_Cmd_To_Esp8285("AT+CWLAPOPT=1,12\r\n",50);
-	Send_Cmd_To_Esp8285("AT+CWLAP\r\n", 0);
+	Send_Cmd_To_Esp8285(WIFI_SET_AP_SCAN_OPT,50);
+	Send_Cmd_To_Esp8285(WIFI_SET_AP_SCAN_START, 0);
 }
 
 /*============================================================================
@@ -345,7 +345,7 @@ void wifi_receive_data_handle(uint8_t *buf, uint32_t len)
 {
 	uint8_t count = 0;
 	uint8_t tmpbuf[256] = {0};
-	uint8_t *ptr = buf;
+	uint8_t *ptr = NULL;
 	uint8_t *ptr1 = NULL;
 	uint8_t *ptr2 = NULL;
 	bool flag = false;
@@ -354,16 +354,17 @@ void wifi_receive_data_handle(uint8_t *buf, uint32_t len)
 	LOGD("receive:%s", buf);
 #endif
 
-	if(strstr(ptr, WIFI_SLEEP_REPLY))
+	if((ptr = strstr(buf, WIFI_SLEEP_REPLY)) != NULL)
 	{
 		wifi_off_ok_flag = true;
 		return;
 	}
 
-	if(strstr(ptr, WIFI_GET_MAC_REPLY))
+	if((ptr = strstr(buf, WIFI_GET_MAC_REPLY)) != NULL)
 	{
-		//AT+CIPAPMAC_DEF?
-		//+CIPAPMAC_DEF:"ff:ff:ff:ff:ff:ff"
+		//AT+CIFSR
+		//+CIFSR:STAIP,"192.168.3.221"
+		//+CIFSR:STAMAC,"70:03:9f:d3:54:58"
 		//\r\n
 		//OK
 		//\r\n
@@ -380,7 +381,7 @@ void wifi_receive_data_handle(uint8_t *buf, uint32_t len)
 		return;
 	}
 
-	if(strstr(ptr, WIFI_GET_VER))
+	if((ptr = strstr(buf, WIFI_GET_VER)) != NULL)
 	{
 		//AT+GMR
 		//AT version:1.6.2.0(Apr 13 2018 11:10:59)
@@ -409,7 +410,7 @@ void wifi_receive_data_handle(uint8_t *buf, uint32_t len)
 		return;
 	}
 
-	if(strstr(ptr,WIFI_DATA_HEAD))
+	if((ptr = strstr(buf,WIFI_DATA_HEAD)) != NULL)
 	{
 		//+CWLAP:(-61,"f4:84:8d:8e:9f:eb")
 		//+CWLAP:(-67,"da:f1:5b:ff:f2:bc")
@@ -666,7 +667,7 @@ void WifiMsgProcess(void)
 void wifi_get_infor(void)
 {
 	//设置工作模式 1:station模式 2:AP模式 3:兼容AP+station模式
-	Send_Cmd_To_Esp8285("AT+CWMODE=3\r\n",50);
+	Send_Cmd_To_Esp8285(WIFI_SET_MODE,50);
 	//获取Mac地址
 	Send_Cmd_To_Esp8285(WIFI_GET_MAC_CMD,50);
 	//获取版本信息
