@@ -158,6 +158,206 @@ void TimeCheckSendWristOffData(void)
 	NBSendTimelyWristOffData(reply, strlen(reply));
 }
 
+
+/*****************************************************************************
+ * FUNCTION
+ *  TimeCheckSendLocationData
+ * DESCRIPTION
+ *  定时检测并上传定位数据包
+ * PARAMETERS
+ *	Nothing
+ * RETURNS
+ *  Nothing
+ *****************************************************************************/
+void TimeCheckSendLocationData(void)
+{
+	static uint32_t loc_hour_count = 0;
+	bool flag = false;
+
+	loc_hour_count++;
+	if(date_time.hour >= 21 || date_time.hour < 9)
+	{
+		if(loc_hour_count == 360)
+		{
+			flag = true;
+		}
+	}
+	else if(loc_hour_count == global_settings.dot_interval.time)
+	{
+		flag = true;
+	}
+
+	if(flag)
+	{
+		loc_hour_count = 0;
+	#ifdef CONFIG_WIFI_SUPPORT
+		location_wait_wifi = true;
+		APP_Ask_wifi_data();
+	#else
+		location_wait_gps = true;
+		APP_Ask_GPS_Data();
+	#endif
+	}
+}
+
+/*****************************************************************************
+ * FUNCTION
+ *  StepCheckSendLocationData
+ * DESCRIPTION
+ *  计步检测并上传定位数据包
+ * PARAMETERS
+ *	steps			[IN]		当前累计的记步数
+ * RETURNS
+ *  Nothing
+ *****************************************************************************/
+void StepCheckSendLocationData(uint16_t steps)
+{
+	static uint16_t step_count = 0;
+
+	if(step_count == 0)
+		step_count = g_last_steps;
+	
+	if((steps - step_count) >= global_settings.dot_interval.steps)
+	{
+		step_count = steps;
+
+	#ifdef CONFIG_WIFI_SUPPORT
+		location_wait_wifi = true;
+		APP_Ask_wifi_data();
+	#else
+		location_wait_gps = true;
+		APP_Ask_GPS_Data();
+	#endif		
+	}
+}
+
+/*****************************************************************************
+ * FUNCTION
+ *  SyncSendHealthData
+ * DESCRIPTION
+ *  数据同步上传健康数据包
+ * PARAMETERS
+ *	Nothing
+ * RETURNS
+ *  Nothing
+ *****************************************************************************/
+void SyncSendHealthData(void)
+{
+	uint16_t steps=0,calorie=0,distance=0;
+	uint16_t light_sleep=0,deep_sleep=0;
+	uint8_t tmpbuf[20] = {0};
+	uint8_t reply[1024] = {0};
+
+#ifdef CONFIG_IMU_SUPPORT
+  #ifdef CONFIG_STEP_SUPPORT
+	GetSportData(&steps, &calorie, &distance);
+  #endif
+  #ifdef CONFIG_SLEEP_SUPPORT
+	GetSleepTimeData(&deep_sleep, &light_sleep);
+  #endif
+#endif
+
+	//steps
+	sprintf(tmpbuf, "%d,", steps);
+	strcpy(reply, tmpbuf);
+	
+	//wrist
+	if(1
+	#ifdef CONFIG_WRIST_CHECK_SUPPORT	
+		&& ppg_skin_contacted_flag
+	#endif
+		)
+		strcat(reply, "1,");
+	else		
+		strcat(reply, "0,");
+
+	//sitdown time
+	strcat(reply, "0,");
+	
+	//activity time
+	strcat(reply, "0,");
+	
+	//light sleep time
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", light_sleep);
+	strcat(reply, tmpbuf);
+	
+	//deep sleep time
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", deep_sleep);
+	strcat(reply, tmpbuf);
+	
+	//move body
+	strcat(reply, "0,");
+	
+	//calorie
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", calorie);
+	strcat(reply, tmpbuf);
+	
+	//distance
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", distance);
+	strcat(reply, tmpbuf);
+
+#ifdef CONFIG_PPG_SUPPORT	
+	//systolic
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", g_bpt_menu.systolic);
+	strcat(reply, tmpbuf);
+	
+	//diastolic
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", g_bpt_menu.diastolic); 	
+	strcat(reply, tmpbuf);
+	
+	//heart rate
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", g_hr_menu);		
+	strcat(reply, tmpbuf);
+	
+	//SPO2
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%d,", g_spo2_menu); 	
+	strcat(reply, tmpbuf);
+#else
+	strcat(reply, "0,0,0,0,");
+#endif/*CONFIG_PPG_SUPPORT*/
+
+#ifdef CONFIG_TEMP_SUPPORT
+	//body temp
+	memset(tmpbuf,0,sizeof(tmpbuf));
+	sprintf(tmpbuf, "%0.1f", g_temp_menu); 	
+	strcat(reply, tmpbuf);
+#else
+	strcat(reply, "0.0");
+#endif/*CONFIG_TEMP_SUPPORT*/
+
+	NBSendSingleHealthData(reply, strlen(reply));
+}
+
+/*****************************************************************************
+ * FUNCTION
+ *  SyncSendLocalData
+ * DESCRIPTION
+ *  数据同步上传定位数据包
+ * PARAMETERS
+ *	Nothing
+ * RETURNS
+ *  Nothing
+ *****************************************************************************/
+void SyncSendLocalData(void)
+{
+#ifdef CONFIG_WIFI_SUPPORT
+	location_wait_wifi = true;
+	APP_Ask_wifi_data();
+#else
+	location_wait_gps = true;
+	APP_Ask_GPS_Data();
+#endif
+
+}
+
 /*****************************************************************************
  * FUNCTION
  *  SendPowerOnData
