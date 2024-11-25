@@ -131,18 +131,6 @@ config GNSS_SAMPLE_POWER_SAVING_HIGH
 endchoice
 endif # GNSS_SAMPLE_MODE_CONTINUOUS
 
-config GNSS_SAMPLE_REFERENCE_LATITUDE
-	string "Reference position latitude in decimal degrees"
-	help
-	  When set, the sample calculates the distance from the reference position for each fix.
-	  Given in decimal degrees (DD), for example "61.500000".
-
-config GNSS_SAMPLE_REFERENCE_LONGITUDE
-	string "Reference position longitude in decimal degrees"
-	help
-	  When set, the sample calculates the distance from the reference position for each fix.
-	  Given in decimal degrees (DD), for example "23.800000".
-
 config GNSS_SAMPLE_LOW_ACCURACY
 	bool "Allow low accuracy fixes"
 	help
@@ -167,10 +155,6 @@ config APPLICATION_WORKQUEUE_PRIORITY
 	int "Application workqueue priority"
 	default SYSTEM_WORKQUEUE_PRIORITY
 	
-config MQTT_KEEPALIVE_TIME
-	int "MQTT keepalive"
-	default 60
-		
 config MQTT_LOG_PUB_TOPIC
 	string "MQTT log publish topic"
 	default "device/e2/pushlog"
@@ -331,6 +315,16 @@ menu "DATA_DOWNLOAD"
 config DATA_DOWNLOAD_SUPPORT
 	bool "data download support"
 	default n
+
+config DOWNLOAD_CLIENT_TLS
+	bool "download client tls"
+	default n
+
+config USE_HTTPS
+	bool
+	prompt "Use HTTPS for download"
+	depends on DOWNLOAD_CLIENT_TLS	
+	
 config DATA_DOWNLOAD_HOST_CN
 	string "Download host name(cn)"	
 config DATA_DOWNLOAD_HOST_HK
@@ -356,10 +350,6 @@ config PPG_DATA_UPDATE
 config PPG_DATA_DOWNLOAD_FILE
 	string "The file to download"
 
-config USE_HTTPS
-	bool
-	prompt "Use HTTPS for download"
-	depends on DOWNLOAD_CLIENT_TLS	
 endmenu #DATA_DOWNLOAD 
 
 menu "IMG_UPDATE"
@@ -369,8 +359,13 @@ config DL_TARGET_UI
 endmenu #IMG_UPDATE
 
 menu "FOTA_MQTT"
+config FOTA_DOWNLOAD
+	bool "fota support"
+	default n
+	
 config FOTA_DOWNLOAD_HOST_CN
 	string "Download host name(cn)"
+
 config FOTA_DOWNLOAD_HOST_HK
 	string "Download host name(hk)"
 
@@ -380,11 +375,6 @@ config FOTA_DOWNLOAD_FILE
 config APPLICATION_VERSION
 	int "Application version"
 	default 1
-
-config USE_HTTPS
-	bool
-	prompt "Use HTTPS for download"
-	depends on DOWNLOAD_CLIENT_TLS
 endmenu #FOTA_MQTT
 
 menu "BAT CODE"
@@ -429,4 +419,4 @@ endmenu
 
 module = APPLICATION_MODULE
 module-str = Application module
-source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+source "subsys/logging/Kconfig.template.log_config"
