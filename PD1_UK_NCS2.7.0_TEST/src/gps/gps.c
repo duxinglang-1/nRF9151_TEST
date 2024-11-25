@@ -18,9 +18,6 @@
 
 //#define GPS_DEBUG
 
-#define PI 3.14159265358979323846
-#define EARTH_RADIUS_METERS (6371.0 * 1000.0)
-
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
 static struct k_work_q gnss_work_q;
 
@@ -105,50 +102,6 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_LTE_NETWORK_MODE_LTE_M_GPS) ||
 	     "CONFIG_LTE_NETWORK_MODE_NBIOT_GPS or "
 	     "CONFIG_LTE_NETWORK_MODE_LTE_M_NBIOT_GPS must be enabled");
 
-BUILD_ASSERT((sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) == 1 &&
-	      sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) == 1) ||
-	     (sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) > 1 &&
-	      sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) > 1),
-	     "CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE and "
-	     "CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE must be both either set or empty");
-
-/* Returns the distance between two coordinates in meters. The distance is calculated using the
- * haversine formula.
- */
-static double distance_calculate(double lat1, double lon1,
-				 double lat2, double lon2)
-{
-	double d_lat_rad = (lat2 - lat1) * PI / 180.0;
-	double d_lon_rad = (lon2 - lon1) * PI / 180.0;
-
-	double lat1_rad = lat1 * PI / 180.0;
-	double lat2_rad = lat2 * PI / 180.0;
-
-	double a = pow(sin(d_lat_rad / 2), 2) +
-		   pow(sin(d_lon_rad / 2), 2) *
-		   cos(lat1_rad) * cos(lat2_rad);
-
-	double c = 2 * asin(sqrt(a));
-
-	return EARTH_RADIUS_METERS * c;
-}
-
-static void print_distance_from_reference(struct nrf_modem_gnss_pvt_data_frame *pvt_data)
-{
-	if (!ref_used) {
-		return;
-	}
-
-	double distance = distance_calculate(pvt_data->latitude, pvt_data->longitude,
-					     ref_latitude, ref_longitude);
-
-	if (IS_ENABLED(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)) {
-		LOG_INF("Distance from reference: %.01f", distance);
-	} else {
-		printf("\nDistance from reference: %.01f\n", distance);
-	}
-}
-
 static void gnss_event_handler(int event)
 {
 	int retval;
@@ -225,12 +178,6 @@ static void agnss_data_get_work_fn(struct k_work *item)
 	ARG_UNUSED(item);
 
 	int err;
-
-	/* GPS data need is always expected to be present and first in list. */
-	__ASSERT(last_agnss.system_count > 0,
-		 "GNSS system data need not found");
-	__ASSERT(last_agnss.system[0].system_id == NRF_MODEM_GNSS_SYSTEM_GPS,
-		 "GPS data need not found");
 
 #if defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_SUPL)
 	/* SUPL doesn't usually provide NeQuick ionospheric corrections and satellite real time
@@ -501,46 +448,12 @@ static int modem_init(void)
 	return 0;
 }
 
-static int sample_init(void)
-{
-	int err = 0;
-
-#if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
-	struct k_work_queue_config cfg =
-	{
-		.name = "gnss_work_q",
-		.no_yield = false
-	};
-
-	k_work_queue_start(
-		&gnss_work_q,
-		gnss_workq_stack_area,
-		K_THREAD_STACK_SIZEOF(gnss_workq_stack_area),
-		GNSS_WORKQ_THREAD_PRIORITY,
-		&cfg);
-#endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE || CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST */
-
-#if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE)
-	k_work_init(&agnss_data_get_work, agnss_data_get_work_fn);
-
-	err = assistance_init(&gnss_work_q);
-#endif /* !CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE */
-
-#if defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
-	k_work_init_delayable(&ttff_test_got_fix_work, ttff_test_got_fix_work_fn);
-	k_work_init_delayable(&ttff_test_prepare_work, ttff_test_prepare_work_fn);
-	k_work_init(&ttff_test_start_work, ttff_test_start_work_fn);
-#endif /* CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST */
-
-	return err;
-}
-
 static int gps_work_init(void)
 {
 	int err = 0;
 
 #if !defined(CONFIG_GNSS_SAMPLE_ASSISTANCE_NONE) || defined(CONFIG_GNSS_SAMPLE_MODE_TTFF_TEST)
-	struct k_work_queue_config cfg = 
+	struct k_work_queue_config cfg =
 	{
 		.name = "gnss_work_q",
 		.no_yield = false
@@ -1057,6 +970,10 @@ void APP_Ask_GPS_Data(void)
 {
 	static uint8_t time_init = false;
 
+#ifdef GPS_DEBUG
+	LOGD("gps_is_on:%d", gps_is_on);
+#endif
+
 #if 1
 	if(!gps_is_on)
 	{
@@ -1117,40 +1034,13 @@ void gps_off(void)
 
 bool gps_turn_on(void)
 {
-	int err;
 	uint8_t cnt = 0;
 	struct nrf_modem_gnss_nmea_data_frame *nmea_data;
-
-	err = nrf_modem_lib_init();
-	if(err)
-	{
-	#ifdef GPS_DEBUG
-		LOGD("Modem library initialization failed, error: %d", err);
-	#endif
-		return false;
-	}
-
-	/* Initialize reference coordinates (if used). */
-	if (sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE) > 1 &&
-		sizeof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE) > 1)
-	{
-		ref_used = true;
-		ref_latitude = atof(CONFIG_GNSS_SAMPLE_REFERENCE_LATITUDE);
-		ref_longitude = atof(CONFIG_GNSS_SAMPLE_REFERENCE_LONGITUDE);
-	}
 
 	if(modem_init() != 0)
 	{
 	#ifdef GPS_DEBUG
 		LOGD("Failed to initialize modem");
-	#endif
-		return false;
-	}
-
-	if(sample_init() != 0)
-	{
-	#ifdef GPS_DEBUG
-		LOGD("Failed to initialize sample");
 	#endif
 		return false;
 	}
@@ -1168,7 +1058,11 @@ bool gps_turn_on(void)
 	gps_local_time = 0;
 	memset(&last_pvt, 0, sizeof(last_pvt));
 	gps_start_time = k_uptime_get();
-	
+
+#ifdef GPS_DEBUG
+	LOGD("begin");
+#endif
+
 	k_work_submit_to_queue(app_work_q, &gps_data_get_work);
 
 	return true;
@@ -1245,6 +1139,10 @@ void GPSMsgProcess(void)
 	if(gps_on_flag)
 	{
 		gps_on_flag = false;
+		
+		if(gps_is_on)
+			return;
+		
 		if(test_gps_flag)
 		{
 			SetModemTurnOff();
@@ -1257,6 +1155,10 @@ void GPSMsgProcess(void)
 	if(gps_off_flag)
 	{
 		gps_off_flag = false;
+
+		if(!gps_is_on)
+			return;
+		
 		gps_off();
 		if(test_gps_flag)
 		{
