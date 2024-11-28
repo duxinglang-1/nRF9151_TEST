@@ -323,7 +323,6 @@ config DOWNLOAD_CLIENT_TLS
 config USE_HTTPS
 	bool
 	prompt "Use HTTPS for download"
-	depends on DOWNLOAD_CLIENT_TLS	
 	
 config DATA_DOWNLOAD_HOST_CN
 	string "Download host name(cn)"	
