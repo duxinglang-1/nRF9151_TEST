@@ -47,7 +47,7 @@ static bool sys_pwron_completed_flag = false;
 
 /* Stack definition for application workqueue */
 K_THREAD_STACK_DEFINE(nb_stack_area,
-		      4096);
+		      8192);
 static struct k_work_q nb_work_q;
 
 #ifdef CONFIG_IMU_SUPPORT
@@ -63,8 +63,54 @@ static struct k_work_q gps_work_q;
 
 static void modem_init(void)
 {
-	nrf_modem_lib_init();
-	//boot_write_img_confirmed();
+	int ret,type;
+	
+	ret = nrf_modem_lib_init();
+	if(ret)
+	{
+		LOGD("ret: %d", ret);
+		if(ret != -EAGAIN && ret != -EIO)
+		{
+			return ret;
+		}
+		else if(ret == -EIO)
+		{
+			LOGD("Please program full modem firmware with the bootloader or external tools");
+		}
+	}
+
+	type = mcuboot_swap_type();
+	switch(type)
+	{
+	/** Attempt to boot the contents of slot 0. */
+	case BOOT_SWAP_TYPE_NONE:
+		/* Normal reset, nothing happened, do nothing. */
+		LOGD("BOOT_SWAP_TYPE_NONE");
+		return;
+
+	/** Swap to slot 1. Absent a confirm command, revert back on next boot. */
+	case BOOT_SWAP_TYPE_TEST:
+		LOGD("BOOT_SWAP_TYPE_TEST");
+		break;
+
+	/** Swap to slot 1, and permanently switch to booting its contents. */
+	case BOOT_SWAP_TYPE_PERM:
+		LOGD("BOOT_SWAP_TYPE_PERM");
+		break;
+		
+	/** Swap failed because image to be run is not valid. */
+	case BOOT_SWAP_TYPE_FAIL:
+		LOGD("BOOT_SWAP_TYPE_FAIL");
+		break;
+
+	/** Swap back to alternate slot. A confirm changes this state to NONE. */
+	case BOOT_SWAP_TYPE_REVERT:
+		/* Happens on a successful application FOTA. */
+		LOGD("BOOT_SWAP_TYPE_REVERT");
+		ret = boot_write_img_confirmed();
+		LOGD("ret:%d", ret);
+		break;
+	}
 }
 
 void system_init(void)
@@ -84,7 +130,7 @@ void system_init(void)
 #endif
 	pmu_init();
 	key_init();
-	flash_init();
+	//flash_init();
 	
 #ifdef CONFIG_AUDIO_SUPPORT	
 	audio_init();
@@ -98,7 +144,7 @@ void system_init(void)
 #ifdef CONFIG_PRESSURE_SUPPORT
 	pressure_init();
 #endif
-	LogInit();
+	//LogInit();
 
 	NB_init(&nb_work_q);
 	GPS_init(&gps_work_q);

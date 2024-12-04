@@ -17,6 +17,9 @@
 #include "key.h"
 #include "pmu.h"
 #include "sos.h"
+#ifdef CONFIG_FOTA_DOWNLOAD
+#include "fota_mqtt.h"
+#endif
 #ifdef CONFIG_FACTORY_TEST_SUPPORT
 #include "ft_main.h"
 #endif/*CONFIG_FACTORY_TEST_SUPPORT*/
@@ -952,6 +955,7 @@ void KeyMsgProcess(void)
 }
 
 extern void poweroff_confirm(void);
+extern void MenuStartFOTA(void);
 void key_init(void)
 {
 	int err;
@@ -973,5 +977,5 @@ void key_init(void)
 #endif
 
 	SetKeyHandler(PmuInterruptHandle, KEY_SOS, KEY_EVENT_DOWN);
-	SetKeyHandler(SOSTrigger, KEY_SOS, KEY_EVENT_LONG_PRESS);
+	SetKeyHandler(MenuStartFOTA, KEY_SOS, KEY_EVENT_LONG_PRESS);
 }

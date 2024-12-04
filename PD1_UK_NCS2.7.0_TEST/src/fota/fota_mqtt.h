@@ -10,8 +10,6 @@
 #ifndef __FOTA_MQTT_H__
 #define __FOTA_MQTT_H__
 
-#include "lcd.h"
-
 #define FOTA_LOGO_W				60
 #define FOTA_LOGO_H				60
 #define FOTA_LOGO_X				((LCD_WIDTH-FOTA_LOGO_W)/2)
@@ -86,7 +84,7 @@ extern void fota_start_confirm(void);
 extern void fota_reboot_confirm(void);
 extern void fota_exit(void);
 extern bool fota_is_running(void);
-
+extern void VerCheckStart(void);
 extern FOTA_STATUS_ENUM get_fota_status(void);
 
 #endif/*__FOTA_MQTT_H__*/

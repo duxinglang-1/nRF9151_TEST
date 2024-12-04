@@ -40,7 +40,7 @@
 
 //#define NB_DEBUG
 
-#define MQTT_CONNECTED_KEEP_TIME	(60)
+#define MQTT_CONNECTED_KEEP_TIME	(30)
 
 static void SendDataCallBack(struct k_timer *timer_id);
 K_TIMER_DEFINE(send_data_timer, SendDataCallBack, NULL);
@@ -391,7 +391,7 @@ static void mqtt_evt_handler(struct mqtt_client *const c,
 			break;
 		}
 
-	#ifdef NB_DEBUG
+	#if	1//def NB_DEBUG
 		LOGD("MQTT client connected!"); 	
 	#endif
 
@@ -418,7 +418,7 @@ static void mqtt_evt_handler(struct mqtt_client *const c,
 		break;
 
 	case MQTT_EVT_DISCONNECT:
-	#ifdef NB_DEBUG
+	#if 1//def NB_DEBUG
 		LOGD("MQTT client disconnected %d", evt->result);
 	#endif
 		mqtt_connected = false;
@@ -661,7 +661,7 @@ static void mqtt_link(struct k_work_q *work_q)
 	int err;
 	static bool init_flag = false;
 	
-#ifdef NB_DEBUG
+#if	1//def NB_DEBUG
 	LOGD("begin");
 #endif
 
@@ -1820,6 +1820,9 @@ void ParseData(uint8_t *data, uint32_t datalen)
 			uint8_t strtmp[256] = {0};
 			uint32_t copylen = 0;
 
+			//Add a ',' as the ending character at the end
+			strcat(strdata, ",");
+			
 			//后台下发最新版本信息
 			//project dir
 			ptr = strstr(strdata, ",");
@@ -1848,6 +1851,7 @@ void ParseData(uint8_t *data, uint32_t datalen)
 			memcpy(g_new_modem_ver, ptr, copylen);
 
 			//52810 fw ver
+		#ifdef CONFIG_BLE_SUPPORT	
 			ptr = ptr1+1;
 			ptr1 = strstr(ptr, ",");
 			if(ptr1 == NULL)
@@ -1855,8 +1859,10 @@ void ParseData(uint8_t *data, uint32_t datalen)
 			copylen = (ptr1-ptr) < sizeof(g_new_ble_ver) ? (ptr1-ptr) : sizeof(g_new_ble_ver);
 			memset(g_new_ble_ver, 0x00, sizeof(g_new_ble_ver));
 			memcpy(g_new_ble_ver, ptr, copylen);
+		#endif
 
 			//ppg ver
+		#ifdef CONFIG_PPG_SUPPORT	
 			ptr = ptr1+1;
 			ptr1 = strstr(ptr, ",");
 			if(ptr1 == NULL)
@@ -1864,8 +1870,10 @@ void ParseData(uint8_t *data, uint32_t datalen)
 			copylen = (ptr1-ptr) < sizeof(g_new_ppg_ver) ? (ptr1-ptr) : sizeof(g_new_ppg_ver);
 			memset(g_new_ppg_ver, 0x00, sizeof(g_new_ppg_ver));
 			memcpy(g_new_ppg_ver, ptr, copylen);
-
+		#endif
+		
 			//wifi ver
+		#ifdef CONFIG_WIFI_SUPPORT	
 			ptr = ptr1+1;
 			ptr1 = strstr(ptr, ",");
 			if(ptr1 == NULL)
@@ -1873,26 +1881,8 @@ void ParseData(uint8_t *data, uint32_t datalen)
 			copylen = (ptr1-ptr) < sizeof(g_new_wifi_ver) ? (ptr1-ptr) : sizeof(g_new_wifi_ver);
 			memset(g_new_wifi_ver, 0x00, sizeof(g_new_wifi_ver));
 			memcpy(g_new_wifi_ver, ptr, copylen);
-
-			//ui ver
-			ptr = ptr1+1;
-			ptr1 = strstr(ptr, ",");
-			if(ptr1 == NULL)
-				return;
-			copylen = (ptr1-ptr) < sizeof(g_new_ui_ver) ? (ptr1-ptr) : sizeof(g_new_ui_ver);
-			memset(g_new_ui_ver, 0x00, sizeof(g_new_ui_ver));
-			memcpy(g_new_ui_ver, ptr, copylen);
-
-			//font ver
-			ptr = ptr1+1;
-			ptr1 = strstr(ptr, ",");
-			if(ptr1 == NULL)
-				copylen = (datalen-(ptr-strdata)) < sizeof(g_new_font_ver) ? (datalen-(ptr-strdata)) : sizeof(g_new_font_ver);
-			else
-				copylen = (ptr1-ptr) < sizeof(g_new_font_ver) ? (ptr1-ptr) : sizeof(g_new_font_ver);
-			memset(g_new_font_ver, 0x00, sizeof(g_new_font_ver));
-			memcpy(g_new_font_ver, ptr, copylen);
-
+		#endif
+		
 		#ifdef CONFIG_FOTA_DOWNLOAD
 			VerCheckExit();
 		#endif
@@ -2959,7 +2949,7 @@ static void nb_link(struct k_work *work)
 	}
 	else
 	{
-	#ifdef NB_DEBUG
+	#if	1//def NB_DEBUG
 		LOGD("linking");
 	#endif
 		nb_connecting_flag = true;
@@ -2994,7 +2984,7 @@ static void nb_link(struct k_work *work)
 		}
 		else
 		{
-		#ifdef NB_DEBUG
+		#if	1//def NB_DEBUG
 			LOGD("Connected to LTE network");
 		#endif
 

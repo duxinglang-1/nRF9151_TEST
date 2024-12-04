@@ -24,10 +24,9 @@
 #include "nb.h"
 #include "external_flash.h"
 #include "fota_mqtt.h"
-#include "screen.h"
 #include "logger.h"
 
-//#define FOTA_DEBUG
+#define FOTA_DEBUG
 
 #define TLS_SEC_TAG 42
 #define FOTA_RESULT_NOTIFY_TIMEOUT	5
@@ -49,16 +48,10 @@ static FOTA_STATUS_ENUM fota_cur_status = FOTA_STATUS_ERROR;
 
 static void fota_timer_handler(struct k_timer *timer_id);
 K_TIMER_DEFINE(fota_timer, fota_timer_handler, NULL);
+static void fota_start_timer_handler(struct k_timer *timer_id);
+K_TIMER_DEFINE(fota_start_timer, fota_start_timer_handler, NULL);
 static void VerCheckkTimerOutCallBack(struct k_timer *timer_id);
 K_TIMER_DEFINE(ver_check_timer, VerCheckkTimerOutCallBack, NULL);
-
-/**@brief Recoverable BSD library error. */
-void bsd_recoverable_error_handler(uint32_t err)
-{
-#ifdef FOTA_DEBUG
-	LOGD("bsdlib recoverable error: %u\n", err);
-#endif
-}
 
 static int modem_configure(void)
 {
@@ -83,7 +76,7 @@ static int modem_configure(void)
 
 	if(nrf_modem_at_cmd(buf, sizeof(buf), "AT%%XEPCO=0") == 0)
 	{
-	#ifdef NB_DEBUG
+	#ifdef FOTA_DEBUG
 		LOGD("XEPCO:%s", buf);
 	#endif
 	}
@@ -169,8 +162,9 @@ static void app_dfu_transfer_start(struct k_work *unused)
 
 	strcpy(file, g_prj_dir);
 	strcat(file, CONFIG_FOTA_DOWNLOAD_FILE);
-	
-	retval = fota_download_start(host, file, sec_tag, 0, 0);
+
+	retval = fota_download_start_with_image_type(host, file, sec_tag, 0, 0, DFU_TARGET_IMAGE_TYPE_MCUBOOT);
+	//retval = fota_download_start(host, file, sec_tag, 0, 0);
 	if(retval != 0)
 	{
 	#ifdef FOTA_DEBUG
@@ -187,8 +181,6 @@ void fota_exit(void)
 {
 	fota_run_flag = false;
 	fota_cur_status = FOTA_STATUS_MAX;
-	LCD_Set_BL_Mode(LCD_BL_AUTO);
-	ExitFOTAScreen();
 }
 
 static void VerCheckkTimerOutCallBack(struct k_timer *timer_id)
@@ -225,6 +217,11 @@ static void fota_timer_handler(struct k_timer *timer)
 	}
 }
 
+void fota_start_timer_handler(struct k_timer *timer_id)
+{
+	fota_confirm_flag = true;
+}
+
 void fota_work_init(struct k_work_q *work_q)
 {
 	app_work_q = work_q;
@@ -253,8 +250,6 @@ void fota_start(void)
 	{
 		fota_run_flag = true;
 		fota_cur_status = FOTA_STATUS_PREPARE;
-		
-		EnterFOTAScreen();		
 	}
 }
 
@@ -278,9 +273,9 @@ void fota_start_confirm(void)
 
 	fota_cur_status = FOTA_STATUS_LINKING;
 	fota_redraw_pro_flag = true;
-	LCD_Set_BL_Mode(LCD_BL_ALWAYS_ON);
-	mqtt_unlink();
-	modem_configure();
+
+	//mqtt_unlink();
+	//modem_configure();
 	k_work_schedule_for_queue(app_work_q, &fota_work, K_SECONDS(2));
 }
 
@@ -332,6 +327,9 @@ static int application_init(void)
 	int err;
 
 	err = fota_download_init(fota_dl_handler);
+#ifdef FOTA_DEBUG
+	LOGD("err:%d", err);
+#endif	
 	if(err != 0)
 	{
 		return err;
@@ -361,11 +359,6 @@ void fota_init(void)
 
 void FOTARedrawProgress(void)
 {
-	if(screen_id == SCREEN_ID_FOTA)
-	{
-		scr_msg[screen_id].para |= SCREEN_EVENT_UPDATE_FOTA;
-		scr_msg[screen_id].act = SCREEN_ACTION_UPDATE;
-	}
 }
 
 void MenuStartFOTA(void)
@@ -422,7 +415,6 @@ void FotaMsgProc(void)
 		else
 	#endif		
 		{
-			LCD_Clear(BLACK);
 			sys_reboot(1);
 		}
 	}
@@ -451,11 +443,7 @@ void VerCheckExit(void)
 			#endif
 			)
 		{
-			fota_start();
-		}
-		else
-		{
-			ReturnFTFotaMenu();
+			k_timer_start(&fota_start_timer, K_SECONDS(FOTA_RESULT_NOTIFY_TIMEOUT), K_NO_WAIT);
 		}
 	}
 }
@@ -464,10 +452,7 @@ void VerCheckMsgProc(void)
 {
 	if(ver_check_timeout_flag)
 	{
-		LOGD("ver_check_timeout_flag");
 		ver_check_timeout_flag = false;
-
-		ReturnFTFotaMenu();
 	}
 }
 

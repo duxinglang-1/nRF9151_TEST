@@ -547,6 +547,16 @@ void UpdateSystemTime(void)
 	  #endif
 	 #endif
 	#endif
+	
+		if(date_time.hour == 3)	//xb ddd 2024-03-14 Upload a synchronization packet at 03:00 for the backend to calibrate the watch's time.
+		{
+			SyncSendHealthData();
+		}
+
+		//if(date_time.hour == 4)	//xb add 2024-11-22 Start firmware FOTA upgrade at 4am.
+		{
+			//VerCheckStart();
+		}
 	}
 
 	if((date_time_changed&0x08) != 0)
