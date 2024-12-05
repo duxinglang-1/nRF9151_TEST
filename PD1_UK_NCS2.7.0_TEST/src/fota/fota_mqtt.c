@@ -26,7 +26,7 @@
 #include "fota_mqtt.h"
 #include "logger.h"
 
-#define FOTA_DEBUG
+//#define FOTA_DEBUG
 
 #define TLS_SEC_TAG 42
 #define FOTA_RESULT_NOTIFY_TIMEOUT	5
@@ -162,9 +162,8 @@ static void app_dfu_transfer_start(struct k_work *unused)
 
 	strcpy(file, g_prj_dir);
 	strcat(file, CONFIG_FOTA_DOWNLOAD_FILE);
-
-	retval = fota_download_start_with_image_type(host, file, sec_tag, 0, 0, DFU_TARGET_IMAGE_TYPE_MCUBOOT);
-	//retval = fota_download_start(host, file, sec_tag, 0, 0);
+	
+	retval = fota_download_start(host, file, sec_tag, 0, 0);
 	if(retval != 0)
 	{
 	#ifdef FOTA_DEBUG
@@ -271,11 +270,12 @@ void fota_start_confirm(void)
 		MenuStopWifi();
 #endif
 
+	fota_run_flag = true;
 	fota_cur_status = FOTA_STATUS_LINKING;
 	fota_redraw_pro_flag = true;
 
-	//mqtt_unlink();
-	//modem_configure();
+	mqtt_unlink();
+	modem_configure();
 	k_work_schedule_for_queue(app_work_q, &fota_work, K_SECONDS(2));
 }
 
@@ -327,9 +327,6 @@ static int application_init(void)
 	int err;
 
 	err = fota_download_init(fota_dl_handler);
-#ifdef FOTA_DEBUG
-	LOGD("err:%d", err);
-#endif	
 	if(err != 0)
 	{
 		return err;
