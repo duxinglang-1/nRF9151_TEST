@@ -391,7 +391,7 @@ static void mqtt_evt_handler(struct mqtt_client *const c,
 			break;
 		}
 
-	#if	1//def NB_DEBUG
+	#ifdef NB_DEBUG
 		LOGD("MQTT client connected!"); 	
 	#endif
 
@@ -418,7 +418,7 @@ static void mqtt_evt_handler(struct mqtt_client *const c,
 		break;
 
 	case MQTT_EVT_DISCONNECT:
-	#if 1//def NB_DEBUG
+	#ifdef NB_DEBUG
 		LOGD("MQTT client disconnected %d", evt->result);
 	#endif
 		mqtt_connected = false;
@@ -2949,7 +2949,7 @@ static void nb_link(struct k_work *work)
 	}
 	else
 	{
-	#if	1//def NB_DEBUG
+	#ifdef NB_DEBUG
 		LOGD("linking");
 	#endif
 		nb_connecting_flag = true;
@@ -2984,7 +2984,7 @@ static void nb_link(struct k_work *work)
 		}
 		else
 		{
-		#if	1//def NB_DEBUG
+		#ifdef NB_DEBUG
 			LOGD("Connected to LTE network");
 		#endif
 
