@@ -26,7 +26,7 @@
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(i2c3), okay)
 #define PMU_DEV DT_NODELABEL(i2c3)
 #else
-#error "i2c1 devicetree node is disabled"
+#error "i2c3 devicetree node is disabled"
 #define PMU_DEV	""
 #endif
 
